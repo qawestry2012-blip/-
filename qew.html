@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тетрис с физикой</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: #05060a;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #e8ecff;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 12px;
+  }
+  .game-wrap {
+    position: relative;
+    display: flex;
+    gap: 22px;
+    align-items: flex-start;
+    padding: 14px;
+  }
+  canvas {
+    display: block;
+    border-radius: 14px;
+    box-shadow: 0 0 40px rgba(80,140,255,.25), 0 0 0 2px #2a3355 inset;
+    background: #0b0e18;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 170px;
+  }
+  .card {
+    background: #141a30;
+    border: 1px solid #2a3355;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #7f8db5;
+    font-weight: 600;
+  }
+  .big { font-size: 28px; font-weight: 700; color: #8fd0ff; line-height: 1.1; }
+  .stat { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; }
+  .stat span:last-child { color: #8fd0ff; font-weight: 600; }
+  #next { margin: 0 auto; }
+  .hint { font-size: 12px; line-height: 1.7; color: #6b7699; }
+  .hint b { color: #a8b4d8; font-weight: 600; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 6, 10, .85);
+    border-radius: 18px;
+    z-index: 10;
+  }
+  #overlay.show { display: flex; }
+  .modal {
+    background: #141a30;
+    border: 1px solid #2a3355;
+    border-radius: 16px;
+    padding: 26px 36px;
+    text-align: center;
+    box-shadow: 0 0 60px rgba(80,140,255,.3);
+  }
+  .modal h2 { margin: 0 0 8px; font-size: 22px; }
+  .modal p { margin: 0 0 18px; color: #8f9ac0; font-size: 14px; }
+  button {
+    background: linear-gradient(135deg, #3b6cff, #6a4dff);
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: 11px 26px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: .5px;
+    transition: transform .15s, box-shadow .15s;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(80,120,255,.45); }
+  button:active { transform: translateY(0); }
+  @media (max-width: 620px) {
+    .game-wrap { flex-direction: column; align-items: center; }
+    .panel { width: 300px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="game-wrap">
+  <canvas id="board" width="300" height="600"></canvas>
+  <div class="panel">
+    <div class="card">
+      <h3>Следующая</h3>
+      <canvas id="next" width="140" height="140"></canvas>
+    </div>
+    <div class="card">
+      <h3>Счёт</h3>
+      <div class="big" id="score">0</div>
+      <div class="stat"><span>Линии</span><span id="lines">0</span></div>
+      <div class="stat"><span>Уровень</span><span id="level">1</span></div>
+      <div class="stat"><span>Скорость</span><span id="speed">1.0x</span></div>
+    </div>
+    <div class="card hint">
+      <b>← →</b> движение<br>
+      <b>↑ / X</b> поворот<br>
+      <b>↓</b> мягкое падение<br>
+      <b>Пробел</b> сброс<br>
+      <b>P</b> пауза
+    </div>
+  </div>
+  <div id="overlay">
+    <div class="modal">
+      <h2 id="ovTitle">Пауза</h2>
+      <p id="ovText">Нажмите кнопку, чтобы продолжить</p>
+      <button id="ovBtn">Продолжить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ==================== ПРОВЕРКА CANVAS ====================
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('next');
+const nctx = nextCanvas.getContext('2d');
+if (!ctx || !nctx) {
+  document.body.innerHTML = '<h2 style="color:#ff6b6b;text-align:center;padding:40px">Canvas 2D не поддерживается браузером</h2>';
+  return;
+}
+
+// ==================== КОНСТАНТЫ ====================
+const COLS = 10, ROWS = 20, CELL = 30;
+
+const SHAPES = {
+  I: { color: '#38e8ff', cells: [[0,0],[1,0],[2,0],[3,0]], size: 4 },
+  J: { color: '#4f7dff', cells: [[0,0],[0,1],[1,1],[2,1]], size: 3 },
+  L: { color: '#ff9a3c', cells: [[2,0],[0,1],[1,1],[2,1]], size: 3 },
+  O: { color: '#ffe34f', cells: [[0,0],[1,0],[0,1],[1,1]], size: 2 },
+  S: { color: '#4dff88', cells: [[1,0],[2,0],[0,1],[1,1]], size: 3 },
+  T: { color: '#c96bff', cells: [[1,0],[0,1],[1,1],[2,1]], size: 3 },
+  Z: { color: '#ff4d6b', cells: [[0,0],[1,0],[1,1],[2,1]], size: 3 },
+};
+const TYPES = Object.keys(SHAPES);
+
+const rand = n => Math.floor(Math.random() * n);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const lerp = (a,b,t) => a+(b-a)*t;
+
+// Физика: скорости в КЛЕТКАХ В СЕКУНДУ (не в мс!) — проще и понятнее.
+// На 1-м уровне: ~1.2 клетки/сек. На 10-м: ~6 клеток/сек.
+const PHYSICS = {
+  baseSpeed: 1.2,          // клеток/сек на 1 уровне
+  speedPerLevel: 0.55,     // прирост на уровень
+  maxSpeed: 12,            // потолок гравитации клеток/сек
+  softDropFirst: 55,       // мс до первого шага вниз при зажатой ↓
+  softDropRate: 45,        // мс между шагами (ARR)
+  lockDelay: 380,
+  dAS: 130,
+  arr: 45,
+};
+
+// ==================== ФИГУРА ====================
+class Piece {
+  constructor(type) {
+    const s = SHAPES[type];
+    this.type = type;
+    this.size = s.size;
+    this.color = s.color;
+    this.cells = s.cells.map(([x,y]) => ({x,y}));
+
+    this.x = Math.floor((COLS - s.size) / 2);
+    const minY = Math.min(...this.cells.map(c => c.y));
+    this.y = -minY;
+
+    // визуал
+    this.px = this.x;
+    this.py = this.y;
+    this.tilt = 0;
+    this.tiltVel = 0;
+    this.rotAnim = 0;
+    this.rotAnimVel = 0;
+
+    // физика
+    this.fallSpeed = 0;      // клеток/сек
+    this.fallAccum = 0;      // накопленная дробная часть (в клетках)
+    this.lockedTimer = 0;
+    this.touchingGround = false;
+  }
+
+  rotatedCells(dir) {
+    const s = this.size;
+    return this.cells.map(({x,y}) =>
+      dir > 0
+        ? { x: s - 1 - y, y: x }
+        : { x: y, y: s - 1 - x }
+    );
+  }
+}
+
+// ==================== ИГРА ====================
+class Game {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+    this.score = 0;
+    this.lines = 0;
+    this.level = 1;
+    this.paused = false;
+    this.gameOver = false;
+    this._overShown = false;
+
+    this.piece = null;
+    this.nextType = TYPES[rand(TYPES.length)];
+    this.bag = [];
+
+    this.effects = [];
+    this.lockFlash = [];
+    this.shake = 0;
+
+    this.keys = { left:false, right:false, down:false };
+    this.dasTimer = 0;
+    this.arrTimer = 0;
+    this.lastMoveDir = 0;
+    this.downTimer = 0;
+    this.downFirst = true;
+
+    this.spawn();
+  }
+
+  nextFromBag() {
+    if (this.bag.length === 0) {
+      this.bag = [...TYPES];
+      for (let i = this.bag.length-1; i>0; i--) {
+        const j = rand(i+1);
+        [this.bag[i], this.bag[j]] = [this.bag[j], this.bag[i]];
+      }
+    }
+    return this.bag.pop();
+  }
+
+  spawn() {
+    const type = this.nextType;
+    this.nextType = this.nextFromBag();
+    const p = new Piece(type);
+
+    if (this.collides(p, p.x, p.y, p.cells)) {
+      this.gameOver = true;
+      return;
+    }
+    this.piece = p;
+    this.downTimer = 0;
+    this.downFirst = true;
+    this.dasTimer = 0;
+    this.arrTimer = 0;
+    this.lastMoveDir = 0;
+  }
+
+  collides(piece, px, py, cells) {
+    for (const c of cells) {
+      const x = px + c.x;
+      const y = py + c.y;
+      if (x < 0 || x >= COLS || y >= ROWS) return true;
+      if (y >= 0 && this.grid[y][x]) return true;
+    }
+    return false;
+  }
+
+  isGrounded(piece, px, py, cells) {
+    return this.collides(piece, px, py + 1, cells);
+  }
+
+  move(dx) {
+    const p = this.piece;
+    if (!p) return false;
+    if (!this.collides(p, p.x + dx, p.y, p.cells)) {
+      p.x += dx;
+      p.tiltVel += dx * 0.35;
+      return true;
+    }
+    return false;
+  }
+
+  rotate(dir) {
+    const p = this.piece;
+    if (!p) return false;
+    const newCells = p.rotatedCells(dir);
+    const kicks = [0, -1, 1, -2, 2];
+    for (const k of kicks) {
+      if (!this.collides(p, p.x + k, p.y, newCells)) {
+        p.x += k;
+        p.cells = newCells;
+        p.rotAnimVel += dir * 0.9;
+        return true;
+      }
+      if (!this.collides(p, p.x + k, p.y - 1, newCells)) {
+        p.x += k;
+        p.y -= 1;
+        p.cells = newCells;
+        p.rotAnimVel += dir * 0.9;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hardDrop() {
+    const p = this.piece;
+    if (!p) return;
+    let dist = 0;
+    while (!this.collides(p, p.x, p.y + 1, p.cells)) { p.y++; dist++; }
+    p.fallSpeed = 0;
+    p.fallAccum = 0;
+    this.shake = Math.min(8, 2 + dist * 0.4);
+    this.lockPiece();
+  }
+
+  softStep() {
+    const p = this.piece;
+    if (!p) return false;
+    if (!this.collides(p, p.x, p.y + 1, p.cells)) {
+      p.y++;
+      p.fallSpeed = 0;
+      p.fallAccum = 0;
+      p.lockedTimer = 0;
+      return true;
+    }
+    return false;
+  }
+
+  lockPiece() {
+    const p = this.piece;
+    if (!p) return;
+    let aboveTop = true;
+    for (const c of p.cells) {
+      const x = p.x + c.x;
+      const y = p.y + c.y;
+      if (y >= 0) {
+        this.grid[y][x] = { color: p.color, flash: 1 };
+        aboveTop = false;
+      }
+    }
+    for (const c of p.cells) {
+      const x = p.x + c.x, y = p.y + c.y;
+      if (y >= 0) this.lockFlash.push({x, y, life:1, color:p.color});
+    }
+    this.piece = null;
+    if (aboveTop) { this.gameOver = true; return; }
+    this.clearLines();
+    this.spawn();
+  }
+
+  clearLines() {
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (this.grid[y].every(c => c)) {
+        for (let x = 0; x < COLS; x++) {
+          this.effects.push({
+            x: x*CELL + CELL/2,
+            y: y*CELL + CELL/2,
+            vx: (Math.random()-0.5)*0.35,
+            vy: (Math.random()-0.9)*0.35,
+            life: 1,
+            color: this.grid[y][x].color,
+            size: 3 + Math.random()*5,
+          });
+        }
+        this.grid.splice(y, 1);
+        this.grid.unshift(Array(COLS).fill(null));
+        cleared++;
+        y++;
+      }
+    }
+    if (cleared > 0) {
+      const pts = [0, 100, 300, 500, 800][cleared];
+      this.score += pts * this.level;
+      this.lines += cleared;
+      const nl = Math.floor(this.lines/10) + 1;
+      if (nl !== this.level) { this.level = nl; this.shake = Math.max(this.shake, 6); }
+      this.shake = Math.max(this.shake, cleared*3);
+    }
+  }
+
+  update(dt) {
+    if (this.paused || this.gameOver) return;
+
+    this.shake *= Math.pow(0.9, dt/16);
+    if (this.shake < 0.1) this.shake = 0;
+
+    this.effects = this.effects.filter(e => {
+      e.x += e.vx*dt; e.y += e.vy*dt;
+      e.vy += 0.0025*dt;
+      e.life -= dt/600;
+      return e.life > 0;
+    });
+    this.lockFlash = this.lockFlash.filter(f => {
+      f.life -= dt/320;
+      return f.life > 0;
+    });
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (this.grid[y][x] && this.grid[y][x].flash > 0)
+          this.grid[y][x].flash -= dt/200;
+
+    const p = this.piece;
+    if (!p) return;
+
+    // ----- Горизонталь: DAS/ARR -----
+    const dir = (this.keys.right?1:0) - (this.keys.left?1:0);
+    if (dir !== 0) {
+      if (dir !== this.lastMoveDir) {
+        this.lastMoveDir = dir;
+        this.dasTimer = 0;
+        this.arrTimer = 0;
+        this.move(dir);
+      } else {
+        this.dasTimer += dt;
+        if (this.dasTimer >= PHYSICS.dAS) {
+          this.arrTimer += dt;
+          while (this.arrTimer >= PHYSICS.arr) {
+            this.arrTimer -= PHYSICS.arr;
+            this.move(dir);
+          }
+        }
+      }
+    } else {
+      this.lastMoveDir = 0;
+      this.dasTimer = 0;
+      this.arrTimer = 0;
+    }
+
+    // ----- Мягкое падение: дискретные шаги с ARR -----
+    if (this.keys.down) {
+      this.downTimer += dt;
+      const threshold = this.downFirst ? PHYSICS.softDropFirst : PHYSICS.softDropRate;
+      while (this.downTimer >= threshold) {
+        this.downTimer -= threshold;
+        this.downFirst = false;
+        const moved = this.softStep();
+        if (!moved) break;
+      }
+    } else {
+      this.downTimer = 0;
+      this.downFirst = true;
+    }
+
+    if (!this.piece) return;
+    const cur = this.piece;
+
+    // ----- Гравитация (в клетках/сек) -----
+    const speed = Math.min(
+      PHYSICS.maxSpeed,
+      PHYSICS.baseSpeed + (this.level - 1) * PHYSICS.speedPerLevel
+    );
+
+    const grounded = this.isGrounded(cur, cur.x, cur.y, cur.cells);
+
+    if (grounded) {
+      cur.touchingGround = true;
+      cur.fallSpeed = 0;
+      cur.fallAccum = 0;
+      cur.lockedTimer += dt;
+      if (cur.lockedTimer >= PHYSICS.lockDelay) {
+        this.lockPiece();
+        return;
+      }
+    } else {
+      cur.touchingGround = false;
+      cur.lockedTimer = 0;
+      cur.fallSpeed = speed;
+      // dt в мс, скорость в клетках/сек → делим на 1000
+      cur.fallAccum += cur.fallSpeed * dt / 1000;
+
+      while (cur.fallAccum >= 1) {
+        if (!this.collides(cur, cur.x, cur.y + 1, cur.cells)) {
+          cur.y++;
+          cur.fallAccum -= 1;
+        } else {
+          cur.fallAccum = 0;
+          break;
+        }
+      }
+    }
+
+    // ----- Визуальные координаты -----
+    cur.px = lerp(cur.px, cur.x, Math.min(1, dt/55));
+    const canFall = !this.collides(cur, cur.x, cur.y + 1, cur.cells);
+    const frac = canFall ? cur.fallAccum : 0;
+    cur.py = cur.y + frac;
+
+    // ----- Наклон от горизонтали -----
+    cur.tiltVel *= Math.pow(0.82, dt/16);
+    cur.tilt = clamp(cur.tilt + cur.tiltVel * dt * 0.02, -0.18, 0.18);
+    if (Math.abs(cur.tilt) < 0.002) cur.tilt = 0;
+
+    // ----- Анимация поворота: гарантированный возврат в 0 -----
+    cur.rotAnimVel *= Math.pow(0.72, dt/16);
+    cur.rotAnim += cur.rotAnimVel * dt * 0.02;
+    cur.rotAnim += -cur.rotAnim * Math.min(1, dt / 45);
+    if (Math.abs(cur.rotAnim) < 0.001) cur.rotAnim = 0;
+    if (Math.abs(cur.rotAnimVel) < 0.001) cur.rotAnimVel = 0;
+  }
+
+  // ==================== ОТРИСОВКА ====================
+  draw() {
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bgGrad.addColorStop(0, '#0d1120');
+    bgGrad.addColorStop(1, '#080a12');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = 'rgba(90,120,200,.07)';
+    ctx.lineWidth = 1;
+    for (let x = 1; x < COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,canvas.height); ctx.stroke();
+    }
+    for (let y = 1; y < ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(canvas.width,y*CELL); ctx.stroke();
+    }
+
+    if (this.shake > 0.1) {
+      ctx.translate((Math.random()-0.5)*this.shake, (Math.random()-0.5)*this.shake);
+    }
+
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++) {
+        const cell = this.grid[y][x];
+        if (cell) this.drawBlock(x*CELL, y*CELL, cell.color, CELL, cell.flash||0);
+      }
+
+    for (const f of this.lockFlash) {
+      ctx.save();
+      ctx.globalAlpha = f.life*0.8;
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = f.color;
+      ctx.shadowBlur = 18;
+      ctx.fillRect(f.x*CELL+3, f.y*CELL+3, CELL-6, CELL-6);
+      ctx.restore();
+    }
+
+    const p = this.piece;
+    if (p) {
+      this.drawGhost(p);
+
+      const ox = p.px * CELL;
+      const oy = p.py * CELL;
+      const cx = ox + p.size * CELL / 2;
+      const cy = oy + p.size * CELL / 2;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(p.rotAnim);
+      ctx.translate(-cx, -cy);
+      ctx.translate(p.tilt * 14, 0);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.clip();
+
+      for (const c of p.cells) {
+        const bx = ox + c.x * CELL;
+        const by = oy + c.y * CELL;
+        this.drawBlock(bx, by, p.color, CELL, 0, true);
+      }
+      ctx.restore();
+      ctx.restore();
+    }
+
+    for (const e of this.effects) {
+      ctx.save();
+      ctx.globalAlpha = e.life;
+      ctx.fillStyle = e.color;
+      ctx.shadowColor = e.color;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.size*e.life, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  drawBlock(x, y, color, size, flash=0, active=false) {
+    const r = 5;
+    if (active) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 14;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+
+    const grad = ctx.createLinearGradient(x, y, x+size, y+size);
+    grad.addColorStop(0, this.lighten(color, 0.35 + flash*0.4));
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(1, this.darken(color, 0.35));
+    ctx.fillStyle = grad;
+    this.roundRect(x+1.5, y+1.5, size-3, size-3, r);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.18 + flash*0.5) + ')';
+    this.roundRect(x+4, y+4, size-12, (size-12)*0.35, r*0.7);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 1;
+    this.roundRect(x+1.5, y+1.5, size-3, size-3, r);
+    ctx.stroke();
+  }
+
+  drawGhost(p) {
+    let gy = p.y;
+    while (!this.collides(p, p.x, gy+1, p.cells)) gy++;
+    if (gy === p.y || gy < 0) return;
+
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 2;
+    for (const c of p.cells) {
+      const x = (p.x + c.x) * CELL;
+      const y = (gy + c.y) * CELL;
+      if (y + CELL < 0) continue;
+      this.roundRect(x+3, y+3, CELL-6, CELL-6, 5);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+  }
+
+  lighten(hex, amt) { return this.mix(hex, '#ffffff', amt); }
+  darken(hex, amt) { return this.mix(hex, '#000000', amt); }
+  mix(a, b, t) {
+    const pa = this.parseHex(a), pb = this.parseHex(b);
+    return `rgb(${Math.round(lerp(pa[0], pb[0], t))},${Math.round(lerp(pa[1], pb[1], t))},${Math.round(lerp(pa[2], pb[2], t))})`;
+  }
+  parseHex(h) {
+    if (h.startsWith('#')) {
+      const v = h.slice(1);
+      if (v.length === 3) return [parseInt(v[0]+v[0],16), parseInt(v[1]+v[1],16), parseInt(v[2]+v[2],16)];
+      return [parseInt(v.slice(0,2),16), parseInt(v.slice(2,4),16), parseInt(v.slice(4,6),16)];
+    }
+    const m = h.match(/\d+/g);
+    return m ? m.map(Number) : [255,255,255];
+  }
+
+  drawNext() {
+    nctx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+    const s = SHAPES[this.nextType];
+    const cell = 28;
+    const w = s.size * cell;
+    const ox = (nextCanvas.width - w) / 2;
+    const oy = (nextCanvas.height - w) / 2;
+
+    nctx.save();
+    nctx.shadowColor = s.color;
+    nctx.shadowBlur = 16;
+    for (const [cx, cy] of s.cells) {
+      const grad = nctx.createLinearGradient(ox+cx*cell, oy+cy*cell, ox+(cx+1)*cell, oy+(cy+1)*cell);
+      grad.addColorStop(0, this.lighten(s.color, 0.35));
+      grad.addColorStop(1, this.darken(s.color, 0.25));
+      nctx.fillStyle = grad;
+      this.roundRectOn(nctx, ox+cx*cell+2, oy+cy*cell+2, cell-4, cell-4, 5);
+      nctx.fill();
+      nctx.shadowBlur = 0;
+      nctx.fillStyle = 'rgba(255,255,255,.2)';
+      this.roundRectOn(nctx, ox+cx*cell+5, oy+cy*cell+5, cell-14, (cell-14)*0.35, 3);
+      nctx.fill();
+    }
+    nctx.restore();
+  }
+
+  roundRectOn(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x+r, y);
+    c.arcTo(x+w, y, x+w, y+h, r);
+    c.arcTo(x+w, y+h, x, y+h, r);
+    c.arcTo(x, y+h, x, y, r);
+    c.arcTo(x, y, x+w, y, r);
+    c.closePath();
+  }
+}
+
+// ==================== СТАРТ ====================
+const game = new Game();
+const overlay = document.getElementById('overlay');
+const ovTitle = document.getElementById('ovTitle');
+const ovText = document.getElementById('ovText');
+const ovBtn = document.getElementById('ovBtn');
+const scoreEl = document.getElementById('score');
+const linesEl = document.getElementById('lines');
+const levelEl = document.getElementById('level');
+const speedEl = document.getElementById('speed');
+
+let overlayAction = 'resume';
+function showOverlay(t, x, b, a) {
+  ovTitle.textContent = t;
+  ovText.textContent = x;
+  ovBtn.textContent = b;
+  overlayAction = a;
+  overlay.classList.add('show');
+}
+function hideOverlay() { overlay.classList.remove('show'); }
+
+ovBtn.addEventListener('click', () => {
+  if (overlayAction === 'restart') {
+    // Надёжный рестарт без перезагрузки страницы (в iframe reload может блокироваться)
+    hideOverlay();
+    game.reset();
+    // Сброс таймеров цикла, чтобы не было «рывка» после рестарта
+    accumulator = 0;
+    lastTime = performance.now();
+    game.draw();
+    game.drawNext();
+    updateUI();
+  } else {
+    game.paused = false;
+    hideOverlay();
+  }
+});
+
+// ==================== ВВОД ====================
+const keyMap = {
+  ArrowLeft:'left', ArrowRight:'right', ArrowDown:'down',
+  KeyA:'left', KeyD:'right', KeyS:'down'
+};
+
+document.addEventListener('keydown', e => {
+  if (e.repeat) return;
+
+  if (game.gameOver) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      hideOverlay();
+      game.reset();
+      accumulator = 0;
+      lastTime = performance.now();
+    }
+    return;
+  }
+
+  const mapped = keyMap[e.code];
+  if (mapped) {
+    game.keys[mapped] = true;
+    if (mapped === 'down') {
+      game.downTimer = 0;
+      game.downFirst = true;
+      game.softStep();
+    }
+    e.preventDefault();
+    return;
+  }
+
+  switch (e.code) {
+    case 'ArrowUp':
+    case 'KeyX':
+    case 'KeyW':
+      game.rotate(1);
+      e.preventDefault();
+      break;
+    case 'KeyZ':
+      game.rotate(-1);
+      e.preventDefault();
+      break;
+    case 'Space':
+      game.hardDrop();
+      e.preventDefault();
+      break;
+    case 'KeyP':
+    case 'Escape':
+      if (game.paused) {
+        game.paused = false;
+        hideOverlay();
+      } else {
+        game.paused = true;
+        showOverlay('Пауза', 'Игра приостановлена', 'Продолжить', 'resume');
+      }
+      e.preventDefault();
+      break;
+  }
+});
+
+document.addEventListener('keyup', e => {
+  const mapped = keyMap[e.code];
+  if (mapped) {
+    game.keys[mapped] = false;
+    e.preventDefault();
+  }
+});
+
+// ==================== ЦИКЛ ====================
+let accumulator = 0;
+let lastTime = performance.now();
+const STEP = 1000 / 120;
+
+function updateUI() {
+  scoreEl.textContent = game.score;
+  linesEl.textContent = game.lines;
+  levelEl.textContent = game.level;
+  speedEl.textContent = (
+    1 + (game.level - 1) * (PHYSICS.speedPerLevel / PHYSICS.baseSpeed)
+  ).toFixed(1) + 'x';
+}
+
+function tick(dt) {
+  accumulator += dt;
+  let steps = 0;
+  while (accumulator >= STEP && steps < 10) {
+    game.update(STEP);
+    accumulator -= STEP;
+    steps++;
+  }
+}
+
+let rafWorks = false;
+let rafId = null;
+
+function loop(now) {
+  rafWorks = true;
+  let dt = now - lastTime;
+  lastTime = now;
+  if (dt > 100) dt = 100;
+  if (dt < 0) dt = 0;
+
+  tick(dt);
+  game.draw();
+  game.drawNext();
+  updateUI();
+
+  if (game.gameOver && !game._overShown) {
+    game._overShown = true;
+    showOverlay('Игра окончена', `Ваш счёт: ${game.score}`, 'Заново', 'restart');
+  }
+
+  rafId = requestAnimationFrame(loop);
+}
+
+// Первый кадр сразу
+game.draw();
+game.drawNext();
+updateUI();
+
+rafId = requestAnimationFrame(loop);
+
+// Fallback на setInterval, если rAF заблокирован в iframe/превью
+let fallbackId = null;
+setTimeout(() => {
+  if (!rafWorks) {
+    if (rafId) cancelAnimationFrame(rafId);
+    let fbLast = performance.now();
+    fallbackId = setInterval(() => {
+      const now = performance.now();
+      let dt = now - fbLast;
+      fbLast = now;
+      if (dt > 100) dt = 100;
+
+      tick(dt);
+      game.draw();
+      game.drawNext();
+      updateUI();
+
+      if (game.gameOver && !game._overShown) {
+        game._overShown = true;
+        showOverlay('Игра окончена', `Ваш счёт: ${game.score}`, 'Заново', 'restart');
+      }
+    }, 16);
+  }
+}, 350);
+
+})();
+</script>
+</body>
+</html>
